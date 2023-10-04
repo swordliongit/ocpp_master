@@ -3,6 +3,8 @@ import logging
 from datetime import datetime
 import threading
 
+from ocpp.v16 import enums
+
 try:
     import websockets
 except ModuleNotFoundError:
@@ -16,8 +18,8 @@ except ModuleNotFoundError:
 
 from ocpp.routing import on
 from ocpp.v16 import ChargePoint as cp
-from ocpp.v16 import call_result
-from ocpp.v16.enums import Action, RegistrationStatus
+from ocpp.v16 import call_result, call
+from ocpp.v16.enums import Action, RegistrationStatus, RemoteStartStopStatus
 
 
 logging.basicConfig(level=logging.INFO)
@@ -25,86 +27,129 @@ logging.basicConfig(level=logging.INFO)
 
 class ChargePoint(cp):
     @on(Action.BootNotification)
-    def on_boot_notification(
+    async def on_boot_notification(
         self, charge_point_vendor: str, charge_point_model: str, **kwargs
     ):
+        # Schedule the prompt_caller function to be called after 10 seconds
+        loop = asyncio.get_event_loop()
+        loop.create_task(self.schedule_prompt_caller())
+
         return call_result.BootNotificationPayload(
             current_time=datetime.utcnow().isoformat(),
             interval=10,
             status=RegistrationStatus.accepted,
         )
 
+    async def schedule_prompt_caller(self):
+        await asyncio.sleep(10)  # Wait for 10 seconds
+        await self.prompt_caller()  # Call the prompt_caller function after 10 seconds
+
     @on(Action.StartTransaction)
-    def on_start_transaction():
+    def on_start_transaction(self, **kwargs):
         return call_result.StartTransactionPayload(
-            transaction_id=10,
-            id_tag_info={
-                'status': 'Started'
-            }
+            transaction_id=10, id_tag_info={"status": "Accepted"}
         )
-        
+
     @on(Action.RemoteStartTransaction)
-    def on_remote_transaction():
-        return call_result.RemoteStartTransactionPayload()
+    async def on_remote_start(self, id_tag, connector_id):
+        print("remotely starting")
+        print("idTag:", id_tag)
+        print("connectorId:", connector_id)
+        return await self.remote_start_transaction(id_tag, connector_id)
 
-    @on(Action.StopTransaction)
-    def on_stop_transaction(self, transaction_id, meter_stop, timestamp, **kwargs):
-        # Implement your logic to handle the StopTransaction message here
-        # You can access the transaction_id, meter_stop, and timestamp values
-        # and perform actions accordingly.
-
-        # For example, you can return a successful response
-        return call_result.StopTransactionPayload(
-            id_tag_info={
-                # 'transactionId': transaction_id,
-                'status': 'Accepted',
-                'expiryDate': None  # Set expiryDate if needed
-            }
+    async def remote_start_transaction(self, id_tag, connector_id):
+        obj = {
+            "chargingProfileId": 1,
+            "stackLevel": 0,
+            "chargingProfilePurpose": enums.ChargingProfilePurposeType.chargepointmaxprofile,
+            "chargingProfileKind": enums.ChargingProfileKindType.absolute,
+            "chargingSchedule": {
+                "startSchedule": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S") + "Z",
+                "chargingRateUnit": enums.ChargingRateUnitType.amps,
+                "chargingSchedulePeriod": [{"startPeriod": 0, "limit": 8.0}],
+            },
+        }
+        print("REMOTE START!!!")
+        request = call.RemoteStartTransactionPayload(
+            id_tag=id_tag, connector_id=connector_id
         )
+        response = await self.call(request)
+        # print(response)
+        if response.status == RemoteStartStopStatus.accepted:
+            print("Transaction Started!!!")
+        else:
+            print("Transaction Failed to Start!!!")
+            # print(response.status)
+            # websockets.send("Transaction Started!!!")
 
-    # @on(Action.StatusNotification)
-    # def on_status_notification(self, **kwargs):
-    #     # Extract the required information from kwargs
-    #     connector_id = kwargs.get('connectorId', None)
-    #     status = kwargs.get('status', None)
-    #     timestamp = kwargs.get('timestamp', None)
-    #     error_code = kwargs.get('errorCode', None)
+    async def prompt_caller(self):
+        self.start_remote_transaction = False
+        threading.Thread(target=self.prompt_for_remote).start()
+        while not self.start_remote_transaction:
+            await asyncio.sleep(1)
+        if self.start_remote_transaction:
+            await self.on_remote_start(id_tag="0123456789ABCD", connector_id=1)
 
-    #     print(connector_id, status, timestamp, error_code)
+    def prompt_for_remote(self):
+        input_text = input("Press Enter to authorize: ")
+        if input_text.strip() == "":
+            self.start_remote_transaction = True
+
+    async def remote_stop_transaction(self, transaction_id):
+        print("REMOTE STOP!!!")
+        request = call.RemoteStopTransactionPayload(transaction_id=transaction_id)
+        response = await self.call(request)
+
+        if response.status == RemoteStartStopStatus.accepted:
+            print("Stopping transaction")
+        # websockets.send("Transaction Stopped!!!")
+
+        @on(Action.StopTransaction)
+        def on_stop_transaction(self, transaction_id, meter_stop, timestamp, **kwargs):
+            # Implement your logic to handle the StopTransaction message here
+            # You can access the transaction_id, meter_stop, and timestamp values
+            # and perform actions accordingly.
+
+            # For example, you can return a successful response
+            return call_result.StopTransactionPayload(
+                id_tag_info={
+                    # 'transactionId': transaction_id,
+                    "status": "Accepted",
+                    "expiryDate": None,  # Set expiryDate if needed
+                }
+            )
+
+    @on(Action.StatusNotification)
+    async def on_status_notification(self, connector_id, error_code, status, timestamp):
+        # Handle the StatusNotification message here
+        print("Received StatusNotification:")
+        print(f"Connector ID: {connector_id}")
+        print(f"Error Code: {error_code}")
+        print(f"Status: {status}")
+        print(f"Timestamp: {timestamp}")
+
+        # You can implement your logic for handling the status change
+
+        # Respond to the StatusNotification with a confirmation if needed
+        return call_result.StatusNotificationPayload()
 
     @on(Action.Heartbeat)  # Add a Heartbeat message handler
     async def on_heartbeat(self, **kwargs):
         # Send an empty Heartbeat response
-        return call_result.HeartbeatPayload(
-            current_time=datetime.utcnow().isoformat()
-        )
+        return call_result.HeartbeatPayload(current_time=datetime.utcnow().isoformat())
 
     @on(Action.Authorize)
     async def on_authorize(self, id_tag, **kwargs):
         if self.is_id_tag_authorized(id_tag):
-            self.authorization_accepted = False
-            threading.Thread(target=self.prompt_for_authorization).start()
-            while not self.authorization_accepted:
-                await asyncio.sleep(1)
-            if self.authorization_accepted:
-                return call_result.AuthorizePayload(
-                    id_tag_info={'status': 'Accepted'}
-                )
+            return call_result.AuthorizePayload(id_tag_info={"status": "Accepted"})
         else:
-            return call_result.AuthorizePayload(
-                id_tag_info={'status': 'Invalid'}
-            )
-
-    def prompt_for_authorization(self):
-        input_text = input("Press Enter to authorize: ")
-        if input_text.strip() == "":
-            self.authorization_accepted = True
+            return call_result.AuthorizePayload(id_tag_info={"status": "Invalid"})
 
     def is_id_tag_authorized(self, id_tag):
         # Implement your authorization logic here
         # You can check the id_tag against a list of authorized tags
         # Replace with your authorized tags
-        authorized_tags = ['1234567890', '0123456789ABCD']
+        authorized_tags = ["1234567890", "0123456789ABCD"]
         return id_tag in authorized_tags
 
 
