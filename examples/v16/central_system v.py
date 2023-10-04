@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from datetime import datetime
-import threading
 
 try:
     import websockets
@@ -75,26 +74,23 @@ class ChargePoint(cp):
             current_time=datetime.utcnow().isoformat()
         )
 
-    @on(Action.Authorize)
+    @on(Action.Authorize)  # Add an Authorize message handler
     async def on_authorize(self, id_tag, **kwargs):
-        if self.is_id_tag_authorized(id_tag):
-            self.authorization_accepted = False
-            threading.Thread(target=self.prompt_for_authorization).start()
-            while not self.authorization_accepted:
-                await asyncio.sleep(1)
-            if self.authorization_accepted:
-                return call_result.AuthorizePayload(
-                    id_tag_info={'status': 'Accepted'}
-                )
+        # Check if the id_tag is valid and authorized
+        authorized = self.is_id_tag_authorized(id_tag)
+
+        if authorized:
+            return call_result.AuthorizePayload(
+                id_tag_info={
+                    'status': 'Accepted'
+                }
+            )
         else:
             return call_result.AuthorizePayload(
-                id_tag_info={'status': 'Invalid'}
+                id_tag_info={
+                    'status': 'Invalid'
+                }
             )
-
-    def prompt_for_authorization(self):
-        input_text = input("Press Enter to authorize: ")
-        if input_text.strip() == "":
-            self.authorization_accepted = True
 
     def is_id_tag_authorized(self, id_tag):
         # Implement your authorization logic here
