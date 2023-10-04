@@ -42,6 +42,10 @@ class ChargePoint(cp):
                 'status': 'Started'
             }
         )
+        
+    @on(Action.RemoteStartTransaction)
+    def on_remote_transaction():
+        return call_result.RemoteStartTransactionPayload()
 
     @on(Action.StopTransaction)
     def on_stop_transaction(self, transaction_id, meter_stop, timestamp, **kwargs):
