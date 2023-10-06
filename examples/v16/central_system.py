@@ -129,7 +129,30 @@ class ChargePoint(cp):
         print("Received MeterValues:")
         print(f"Connector ID: {connector_id}")
         print(f"Transaction ID: {transaction_id}")
-        print(f"Meter Value: {meter_value}")
+        # Iterate through the "meterValue" array
+        for mv in meter_value:
+            # Access the "sampled_value" array within each element
+            sampled_values = mv["sampled_value"]
+
+            # Iterate through the "sampled_value" array
+            for sampled_value in sampled_values:
+                # Access the "value" field directly
+                value = sampled_value["value"]
+                print(f"Meter Value: {value}")
+
+        # [
+        #     {
+        #         "timestamp": "1970-01-01T00:24:58.996Z",
+        #         "sampled_value": [
+        #             {
+        #                 "value": "0.00",
+        #                 "context": "Sample.Periodic",
+        #                 "measurand": "Energy.Active.Import.Register",
+        #                 "unit": "Wh",
+        #             }
+        #         ],
+        #     }
+        # ]
 
         # Implement your logic for handling meter values here
 
