@@ -30,25 +30,29 @@ class ChargePoint(cp):
     async def on_boot_notification(
         self, charge_point_vendor: str, charge_point_model: str, **kwargs
     ):
-        # Schedule the prompt_caller function to be called after 10 seconds
-        loop = asyncio.get_event_loop()
-        loop.create_task(self.schedule_prompt_caller())
-
         return call_result.BootNotificationPayload(
             current_time=datetime.utcnow().isoformat(),
             interval=10,
             status=RegistrationStatus.accepted,
         )
 
-    async def schedule_prompt_caller(self):
-        await asyncio.sleep(10)  # Wait for 10 seconds
-        await self.prompt_caller()  # Call the prompt_caller function after 10 seconds
+    async def schedule_RemoteStartTransaction(self):
+        await asyncio.sleep(5)  # Wait for 10 seconds
+        # await self.prompt_caller()  # Call the prompt_caller function after 10 seconds
+        await self.on_remote_start(id_tag="0123456789ABCD", connector_id=1)
 
     @on(Action.StartTransaction)
     def on_start_transaction(self, **kwargs):
         return call_result.StartTransactionPayload(
             transaction_id=10, id_tag_info={"status": "Accepted"}
         )
+
+    @on(Action.StopTransaction)
+    def on_stop_transaction(self, meter_stop, timestamp, transaction_id):
+        print("meterStop", meter_stop)
+        print("timestamp", timestamp)
+        print("transactionId", transaction_id)
+        return call_result.StopTransactionPayload(id_tag_info={"status": "Accepted"})
 
     @on(Action.RemoteStartTransaction)
     async def on_remote_start(self, id_tag, connector_id):
@@ -82,42 +86,55 @@ class ChargePoint(cp):
             # print(response.status)
             # websockets.send("Transaction Started!!!")
 
-    async def prompt_caller(self):
-        self.start_remote_transaction = False
-        threading.Thread(target=self.prompt_for_remote).start()
-        while not self.start_remote_transaction:
-            await asyncio.sleep(1)
-        if self.start_remote_transaction:
-            await self.on_remote_start(id_tag="0123456789ABCD", connector_id=1)
+    # async def prompt_caller(self):
+    #     self.start_remote_transaction = False
+    #     threading.Thread(target=self.prompt_for_remote).start()
+    #     while not self.start_remote_transaction:
+    #         await asyncio.sleep(1)
+    #     if self.start_remote_transaction:
+    #         await self.on_remote_start(id_tag="0123456789ABCD", connector_id=1)
 
-    def prompt_for_remote(self):
-        input_text = input("Press Enter to authorize: ")
-        if input_text.strip() == "":
-            self.start_remote_transaction = True
+    # def prompt_for_remote(self):
+    #     input_text = input("Press Enter to authorize: ")
+    #     if input_text.strip() == "":
+    #         self.start_remote_transaction = True
 
-    async def remote_stop_transaction(self, transaction_id):
-        print("REMOTE STOP!!!")
-        request = call.RemoteStopTransactionPayload(transaction_id=transaction_id)
-        response = await self.call(request)
+    # async def remote_stop_transaction(self, transaction_id):
+    #     print("REMOTE STOP!!!")
+    #     request = call.RemoteStopTransactionPayload(transaction_id=transaction_id)
+    #     response = await self.call(request)
 
-        if response.status == RemoteStartStopStatus.accepted:
-            print("Stopping transaction")
-        # websockets.send("Transaction Stopped!!!")
+    #     if response.status == RemoteStartStopStatus.accepted:
+    #         print("Stopping transaction")
+    #     # websockets.send("Transaction Stopped!!!")
 
-        @on(Action.StopTransaction)
-        def on_stop_transaction(self, transaction_id, meter_stop, timestamp, **kwargs):
-            # Implement your logic to handle the StopTransaction message here
-            # You can access the transaction_id, meter_stop, and timestamp values
-            # and perform actions accordingly.
+    #     @on(Action.StopTransaction)
+    #     def on_stop_transaction(self, transaction_id, meter_stop, timestamp, **kwargs):
+    #         # Implement your logic to handle the StopTransaction message here
+    #         # You can access the transaction_id, meter_stop, and timestamp values
+    #         # and perform actions accordingly.
 
-            # For example, you can return a successful response
-            return call_result.StopTransactionPayload(
-                id_tag_info={
-                    # 'transactionId': transaction_id,
-                    "status": "Accepted",
-                    "expiryDate": None,  # Set expiryDate if needed
-                }
-            )
+    #         # For example, you can return a successful response
+    #         return call_result.StopTransactionPayload(
+    #             id_tag_info={
+    #                 # 'transactionId': transaction_id,
+    #                 "status": "Accepted",
+    #                 "expiryDate": None,  # Set expiryDate if needed
+    #             }
+    #         )
+
+    @on(Action.MeterValues)
+    async def on_meter_values(self, connector_id, transaction_id, meter_value):
+        # Handle the MeterValues message here
+        print("Received MeterValues:")
+        print(f"Connector ID: {connector_id}")
+        print(f"Transaction ID: {transaction_id}")
+        print(f"Meter Value: {meter_value}")
+
+        # Implement your logic for handling meter values here
+
+        # Respond to the MeterValues message with a confirmation if needed
+        return call_result.MeterValuesPayload()
 
     @on(Action.StatusNotification)
     async def on_status_notification(self, connector_id, error_code, status, timestamp):
@@ -127,6 +144,11 @@ class ChargePoint(cp):
         print(f"Error Code: {error_code}")
         print(f"Status: {status}")
         print(f"Timestamp: {timestamp}")
+
+        if status == "Preparing":
+            # Schedule the prompt_caller function to be called after 10 seconds
+            loop = asyncio.get_event_loop()
+            loop.create_task(self.schedule_RemoteStartTransaction())
 
         # You can implement your logic for handling the status change
 
